@@ -1,0 +1,121 @@
+import dash
+from dash import dcc, html, dash_table
+from dash.dependencies import Input, Output
+import dash_bootstrap_components as dbc
+import pandas as pd
+
+# 数据初始化
+data = {
+    '请购单据号': ['R001', 'R001', 'R001', 'R002', 'R003', 'R003'],
+    '物料号': ['3501224655', '354668778', '354668778', '354668778', '354668778', '354668778'],
+    '请购': [2500, 1000, 2300, 1000, 2000, 1000],
+    '采购': [2500, 1000, 2300, 1000, 2000, 1000],
+    '到货': [1000, 1000, 2300, 1000, 2000, 1000],
+    '检验': [1000, 1000, 2300, 1000, 2000, 1000],
+    '入库': [1000, 1000, 2300, 1000, 2000, 1000],
+    '开票': [1000, 1000, 2300, 1000, 2000, 1000],
+    '付款': [1000, 0, 2300, 1000, 2000, 0]
+}
+
+df = pd.DataFrame(data)
+
+def calculate_current_process(row):
+    processes = ['请购', '采购', '到货', '检验', '入库', '开票', '付款']
+    for process in processes:
+        if row[process] == 0:
+            return process
+    for process in processes:
+        if row[process] != row['请购']:
+            return process
+    return '完成'
+
+# 添加当前流程列
+df['当前流程'] = df.apply(calculate_current_process, axis=1)
+
+# 添加已入库/请购列
+df['已入库|请购'] = df.apply(lambda row: f"{row['入库']}|{row['请购']}", axis=1)
+
+# 初始化Dash应用
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+
+# Dash布局
+app.layout = dbc.Container([
+    html.H1("请购单流程看板", className="text-center mb-4"),
+    dcc.Dropdown(
+        id='purchase-order-dropdown',
+        options=[{'label': doc, 'value': doc} for doc in df['请购单据号'].unique()],
+        value=df['请购单据号'].unique()[-1],  # 默认选中最后一个
+        clearable=False,
+        className="mb-4"
+    ),
+    html.Div(id='product-info', className="d-flex justify-content-center mb-3"),
+    dash_table.DataTable(
+        id='table',
+        columns=[{"name": i, "id": i} for i in df.columns if i != '请购单据号'],
+        data=df.to_dict('records'),
+        style_data_conditional=[],
+        style_cell={'textAlign': 'center'},
+        style_header={
+            'backgroundColor': 'rgb(230, 230, 230)',
+            'fontWeight': 'bold'
+        },
+        style_as_list_view=True
+    ),
+], className="mt-4")
+
+@app.callback(
+    Output('table', 'data'),
+    Output('product-info', 'children'),
+    Output('table', 'style_data_conditional'),
+    Input('purchase-order-dropdown', 'value')
+)
+def update_table_and_product_info(selected_document_number):
+    if selected_document_number is None:
+        # 如果没有选择任何值，则使用默认值
+        selected_document_number = df['请购单据号'].unique()[-1]
+
+    filtered_df = df[df['请购单据号'] == selected_document_number]
+
+    # 更新表格数据
+    table_data = filtered_df.to_dict('records')
+
+    # 更新产品信息
+    if not table_data:
+        product_info = []
+    else:
+        first_row = table_data[0]
+        document_number = first_row['请购单据号']
+        centered_doc_number = html.Div(
+            html.Span(f"请购单据号: {document_number}"),
+            style={'display': 'flex', 'justifyContent': 'center'}
+        )
+        product_info = [centered_doc_number]
+
+    # 动态生成样式
+    styles = []
+    for idx, row in enumerate(table_data):
+        current_process = row['当前流程']
+        for col in filtered_df.columns:
+            if col != '请购单据号':
+                if col == current_process:
+                    styles.append({
+                        'if': {
+                            'column_id': col,
+                            'row_index': idx
+                        },
+                        'backgroundColor': 'lightblue'
+                    })
+                elif row[col] == row['请购']:
+                    styles.append({
+                        'if': {
+                            'column_id': col,
+                            'row_index': idx
+                        },
+                        'backgroundColor': 'gray'
+                    })
+
+    return table_data, product_info, styles
+
+# 启动Dash应用
+if __name__ == '__main__':
+    app.run_server(debug=True)
